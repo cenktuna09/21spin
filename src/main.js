@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Table } from './game/Table.js';
 import SlotColumn from './game/SlotColumn.js';
 import { GameState } from './game/GameState.js';
 import Dealer from './game/Dealer.js';
+import Character from './game/Character.js';
 import HUD from './ui/HUD.js';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
@@ -25,28 +25,66 @@ camera.position.set(0, 8, 12);
 camera.lookAt(0, 0, 0);
 
 // ── Lights ────────────────────────────────────────────────────────────────────
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-const pointLight = new THREE.PointLight(0xfff5cc, 2.0, 30);
-pointLight.position.set(0, 10, 0);
-pointLight.castShadow = true;
-pointLight.shadow.mapSize.set(1024, 1024);
-scene.add(pointLight);
-const fillLight = new THREE.PointLight(0x4466ff, 0.5, 20);
-fillLight.position.set(-6, 4, -4);
+// 1. HemisphereLight — gökyüzü/zemin ambient dolgu
+const hemiLight = new THREE.HemisphereLight(0x8899bb, 0x443322, 4);
+hemiLight.position.set(0, 20, 0);
+scene.add(hemiLight);
+
+// 2. DirectionalLight — gölge düşüren ana ışık
+const dirLight = new THREE.DirectionalLight(0xffffff, 5);
+dirLight.position.set(-3, 10, -10);
+dirLight.castShadow = true;
+dirLight.shadow.camera.top    =  8;
+dirLight.shadow.camera.bottom = -8;
+dirLight.shadow.camera.left   = -8;
+dirLight.shadow.camera.right  =  8;
+dirLight.shadow.camera.near   = 0.1;
+dirLight.shadow.camera.far    = 40;
+dirLight.shadow.mapSize.set(2048, 2048);
+scene.add(dirLight);
+
+// 3. Fill light — karşı taraftan yumuşak dolgu
+const fillLight = new THREE.DirectionalLight(0x4466ff, 1.5);
+fillLight.position.set(6, 4, 4);
 scene.add(fillLight);
 
-// ── Controls ──────────────────────────────────────────────────────────────────
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.minPolarAngle = Math.PI / 8;
-controls.maxPolarAngle = Math.PI / 2.2;
-controls.minDistance = 5;
-controls.maxDistance = 25;
-controls.target.set(0, 0, 0);
+// ── Ground Plane + Grid ───────────────────────────────────────────────────────
+// ── Ground (character feet = y -3.75) ────────────────────────────────────────
+const floorTex = new THREE.TextureLoader().load(
+  'https://threejs.org/examples/textures/grid.png'
+);
+floorTex.wrapS = THREE.RepeatWrapping;
+floorTex.wrapT = THREE.RepeatWrapping;
+floorTex.repeat.set(30, 30);
+floorTex.colorSpace = THREE.SRGBColorSpace;
+
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 200),
+  new THREE.MeshStandardMaterial({
+    map: floorTex,
+    color: 0x444444,
+    roughness: 1,
+    metalness: 0,
+  })
+);
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.position.y = -3.75;
+groundMesh.receiveShadow = true;
+scene.add(groundMesh);
+
+// OrbitControls removed — camera is driven by character rotation below
 
 // ── Table ─────────────────────────────────────────────────────────────────────
 new Table(scene);
+
+// ── Characters ────────────────────────────────────────────────────────────────
+const playerChar = new Character(scene, new THREE.Vector3(0, -3.75, 6.5),  { facing: 0,       scale: 3.2, controllable: true });
+const dealerChar = new Character(scene, new THREE.Vector3(0, -3.75, -5.5), { facing: Math.PI, scale: 3.2 });
+
+Promise.all([playerChar.load(), dealerChar.load()]).then(() => {
+  console.log('[Characters] Loaded');
+});
+
 
 // ── Column positions (player, bottom-centre) ──────────────────────────────────
 // 2 base cards centred; 3rd card (HIT) steps to the right
@@ -116,6 +154,25 @@ function spawnThirdColumn() {
   lockTimers.push(t);
 }
 
+// ── Character reactions ───────────────────────────────────────────────────────
+gameState.on('phaseChange', (phase) => {
+  if (phase === 'spinning') dealerChar.deal();
+  if (phase === 'reveal')   dealerChar.deal();
+  if (phase === 'betting')  { playerChar.idle(); dealerChar.idle(); }
+});
+
+gameState.on('roundEnd', (results, _dealerEntry) => {
+  const local = results.find(r => r.id === 'local');
+  if (!local) return;
+  if (local.outcome === 'win' || local.result?.blackjack) {
+    playerChar.celebrate();
+    dealerChar.disappointed();
+  } else if (local.outcome === 'bust' || local.outcome === 'lose') {
+    playerChar.disappointed();
+    dealerChar.celebrate();
+  }
+});
+
 // ── Phase change handler ──────────────────────────────────────────────────────
 gameState.on('phaseChange', (phase) => {
   if (phase === 'reveal') {
@@ -169,16 +226,33 @@ window.addEventListener('resize', () => {
 });
 
 // ── Render loop ───────────────────────────────────────────────────────────────
-const clock = new THREE.Clock();
+const clock = new THREE.Clock(true);
 
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   columns.forEach(c => c.update(delta));
   dealer.update(delta);
+  playerChar.update(delta);
+  dealerChar.update(delta);
   checkColumns();
   hud.update();
-  controls.update();
+
+  // Camera follows player character rotation — fixed offset in local space
+  if (playerChar._model) {
+    const m = playerChar._model;
+    // Offset: 5 units behind, 6 units above (in character's local space)
+    const offset = new THREE.Vector3(0, 9, 6);
+    offset.applyEuler(new THREE.Euler(0, m.rotation.y, 0));
+    camera.position.copy(m.position).add(offset);
+    // Look at a point slightly forward of the character (toward the table)
+    const look = m.position.clone();
+    look.y += 1;
+    look.x -= Math.sin(m.rotation.y) * 6;
+    look.z -= Math.cos(m.rotation.y) * 6;
+    camera.lookAt(look);
+  }
+
   renderer.render(scene, camera);
 }
 

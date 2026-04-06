@@ -142,8 +142,8 @@ export default class SlotColumn {
       // Position: i=0 at top, centre at VISIBLE_CARDS/2
       const startY = (VISIBLE_CARDS - 1) * 0.5 * CARD_GAP - i * CARD_GAP;
       mesh.position.set(0, startY, 0);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
 
       this.group.add(mesh);
       this._cards.push({ mesh, rank, suit });
