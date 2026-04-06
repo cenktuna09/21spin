@@ -78,8 +78,8 @@ scene.add(groundMesh);
 new Table(scene);
 
 // ── Characters ────────────────────────────────────────────────────────────────
-const playerChar = new Character(scene, new THREE.Vector3(0, -3.75, 6.5),  { facing: 0,       scale: 3.2, controllable: true });
-const dealerChar = new Character(scene, new THREE.Vector3(0, -3.75, -5.5), { facing: Math.PI, scale: 3.2 });
+const playerChar = new Character(scene, new THREE.Vector3(0, -3.75, 6.5),  { facing: 0,       scale: 3.5, controllable: true });
+const dealerChar = new Character(scene, new THREE.Vector3(0, -3.75, -5.5), { facing: Math.PI, scale: 3.5 });
 
 Promise.all([playerChar.load(), dealerChar.load()]).then(() => {
   console.log('[Characters] Loaded');
@@ -126,7 +126,7 @@ const hud = new HUD(gameState, columns, {
 
 // ── Round flow ────────────────────────────────────────────────────────────────
 
-function startRound() {
+function startRound(bet = 100) {
   // Clean up previous columns
   lockTimers.forEach(clearTimeout);
   lockTimers = [];
@@ -134,7 +134,7 @@ function startRound() {
   columns.length = 0;
 
   dealer.dispose();
-  gameState.deal(); // betting → spinning
+  gameState.deal(bet); // betting → spinning
 
   // Spawn 2 base player columns
   columns.push(new SlotColumn(scene, COL_POS[0]));
@@ -164,7 +164,7 @@ gameState.on('phaseChange', (phase) => {
 gameState.on('roundEnd', (results, _dealerEntry) => {
   const local = results.find(r => r.id === 'local');
   if (!local) return;
-  if (local.outcome === 'win' || local.result?.blackjack) {
+  if (local.outcome === 'jackpot' || local.result?.superBlackjack || local.result?.blackjack || local.outcome === 'win') {
     playerChar.celebrate();
     dealerChar.disappointed();
   } else if (local.outcome === 'bust' || local.outcome === 'lose') {
@@ -225,8 +225,16 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// ── Mouse-driven camera pitch ─────────────────────────────────────────────────
+// 0 = top of screen (look up), 1 = bottom (look down), 0.5 = neutral
+let _mouseNormY = 0.5;
+window.addEventListener('mousemove', (e) => {
+  _mouseNormY = e.clientY / window.innerHeight;
+});
+
 // ── Render loop ───────────────────────────────────────────────────────────────
-const clock = new THREE.Clock(true);
+const clock = new THREE.Clock();
+clock.start();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -241,13 +249,15 @@ function animate() {
   // Camera follows player character rotation — fixed offset in local space
   if (playerChar._model) {
     const m = playerChar._model;
-    // Offset: 5 units behind, 6 units above (in character's local space)
     const offset = new THREE.Vector3(0, 9, 6);
     offset.applyEuler(new THREE.Euler(0, m.rotation.y, 0));
     camera.position.copy(m.position).add(offset);
-    // Look at a point slightly forward of the character (toward the table)
+    // Mouse Y → pitch clamped to ±5 degrees (tan(5°) × ~10 cam dist ≈ 0.875)
+    const MAX_PITCH_SHIFT = Math.tan(5 * Math.PI / 180) * 10;
+    const rawShift = (0.5 - _mouseNormY) * 14;
+    const pitchShift = Math.max(-MAX_PITCH_SHIFT, Math.min(MAX_PITCH_SHIFT, rawShift));
     const look = m.position.clone();
-    look.y += 1;
+    look.y += 1 + pitchShift;
     look.x -= Math.sin(m.rotation.y) * 6;
     look.z -= Math.cos(m.rotation.y) * 6;
     camera.lookAt(look);

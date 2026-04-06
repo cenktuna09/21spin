@@ -28,7 +28,7 @@ export class GameState extends EventTarget {
   // ── Player registration ────────────────────────────────────────────────────
 
   addPlayer(id, name = 'Player') {
-    this.players[id] = { id, name, score: 0, hand: [], result: null };
+    this.players[id] = { id, name, chips: 500, hand: [], result: null };
   }
 
   removePlayer(id) { delete this.players[id]; }
@@ -36,10 +36,11 @@ export class GameState extends EventTarget {
   // ── Phase transitions ──────────────────────────────────────────────────────
 
   /** betting → spinning */
-  deal() {
+  deal(bet = 100) {
     if (this.phase !== 'betting') return;
     this.round++;
-    this._inHitMode = false;
+    this._currentBet  = bet;
+    this._inHitMode   = false;
     for (const p of Object.values(this.players)) { p.hand = []; p.result = null; }
     this._setPhase('spinning');
   }
@@ -73,16 +74,34 @@ export class GameState extends EventTarget {
    */
   thirdColumnLocked(drawnCards = []) {
     if (this.phase !== 'spinning' || !this._inHitMode) return;
+    let hasTriple = false;
     for (const { playerId, cards } of drawnCards) {
       const player = this.players[playerId];
       if (!player) continue;
       player.hand = [...player.hand, ...cards];
       player.result = this._evaluate(player.hand);
       this._emit('scoreUpdate', player.id, {
-        hand: player.hand, result: player.result, score: player.score,
+        hand: player.hand, result: player.result, chips: player.chips,
       });
+      if (player.result.triple) hasTriple = true;
     }
-    this._startReveal();
+    if (hasTriple) {
+      this._instantWin(drawnCards[0]?.playerId);
+    } else {
+      this._startReveal();
+    }
+  }
+
+  _instantWin(playerId) {
+    const bet    = this._currentBet ?? 100;
+    const player = this.players[playerId];
+    const chipDelta = bet * 5; // 5x jackpot
+    if (player) player.chips = (player.chips ?? 500) + chipDelta;
+    const results = Object.values(this.players)
+      .filter(p => p.id !== 'dealer')
+      .map(p => ({ ...p, chipDelta: p.id === playerId ? chipDelta : 0, outcome: p.id === playerId ? 'jackpot' : 'lose' }));
+    this._setPhase('end');
+    this._emit('roundEnd', results, this.players['dealer']);
   }
 
   _startReveal() {
@@ -122,7 +141,7 @@ export class GameState extends EventTarget {
       player.hand   = cards;
       player.result = this._evaluate(cards);
       this._emit('scoreUpdate', player.id, {
-        hand: player.hand, result: player.result, score: player.score,
+        hand: player.hand, result: player.result, chips: player.chips,
       });
     }
   }
@@ -150,15 +169,19 @@ export class GameState extends EventTarget {
         outcome = 'lose';
       }
 
-      // Award chips
+      // Award chips based on bet
+      const bet    = this._currentBet ?? 100;
       const player = this.players[p.id];
-      if (player) {
-        if (p.result?.total === 21) player.score += 3;
-        else if (outcome === 'win')  player.score += 2;
-        else if (outcome === 'push') player.score += 1;
-      }
+      let chipDelta = 0;
+      if (p.result?.superBlackjack)    chipDelta = Math.floor(bet * 2);
+      else if (p.result?.blackjack)    chipDelta = Math.floor(bet * 1.5);
+      else if (outcome === 'win')      chipDelta = bet;
+      else if (outcome === 'push')     chipDelta = 0;
+      else /* bust / lose */           chipDelta = -bet;
 
-      return { ...p, outcome };
+      if (player) player.chips = (player.chips ?? 500) + chipDelta;
+
+      return { ...p, chipDelta, outcome };
     }).sort((a, b) => (b.result?.total ?? 0) - (a.result?.total ?? 0));
 
     this._setPhase('end');
@@ -172,11 +195,18 @@ export class GameState extends EventTarget {
       if (rank === 'A') aces++;
     }
     while (total > 21 && aces > 0) { total -= 10; aces--; }
+    const triple = cards.length === 3 &&
+      cards[0].rank === cards[1].rank &&
+      cards[1].rank === cards[2].rank;
+
     return {
       total,
-      bust:      total > 21,
-      blackjack: total === 21 && cards.length <= 2,
-      soft:      aces > 0 && total <= 21,
+      bust:           total > 21,
+      blackjack:      total === 21 && cards.length === 2,
+      superBlackjack: total === 21 && cards.length === 3 && !triple,
+      triple,
+      tripleRank:     triple ? cards[0].rank : null,
+      soft:           aces > 0 && total <= 21,
     };
   }
 

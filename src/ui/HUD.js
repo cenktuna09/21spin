@@ -219,9 +219,9 @@ const STYLES = `
 /* ── PLAYER CHOICE OVERLAY (HIT / PASS) ── */
 #hud-choice {
   position: absolute;
-  bottom: 24px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   background: rgba(0,0,0,0.88);
   border: 2px solid #FFD700;
   border-radius: 14px;
@@ -320,7 +320,7 @@ export default class HUD {
     this.onPass     = opts.onPass     ?? null;
     this.onStopCol  = opts.onStopColumn ?? null;
 
-    this._chips       = 500;
+    this._chips       = gameState.players['local']?.chips ?? 500;
     this._bet         = 100;
     this._hand        = [];
     this._result      = null;
@@ -488,6 +488,9 @@ export default class HUD {
       this._result = null;
       this._dealerResult = null;
       this._dealerHistory = [];
+      // Sync chips from GameState
+      const localPlayer = this.gameState.players['local'];
+      if (localPlayer) this._chips = localPlayer.chips;
       this._refreshBettingUI();
     }
   }
@@ -506,20 +509,28 @@ export default class HUD {
     const total = local.result?.total ?? 0;
 
     let headline, sub;
-    if (local.result?.blackjack && outcome !== 'bust') {
-      headline = '21 SPIN!'; sub = '+3 pts bonus!';
+    const delta = local.chipDelta ?? 0;
+    const sign  = delta > 0 ? '+' : '';
+
+    if (outcome === 'jackpot') {
+      const rank = local.result?.tripleRank ?? '???';
+      headline = `★ TRIPLE ${rank}! ★`; sub = `${sign}${delta} JACKPOT!`;
+    } else if (local.result?.superBlackjack && outcome !== 'bust') {
+      headline = 'SUPER 21 SPIN!'; sub = `${sign}${delta} chips (2x)`;
+    } else if (local.result?.blackjack && outcome !== 'bust') {
+      headline = '21 SPIN!'; sub = `${sign}${delta} chips (1.5x)`;
     } else if (outcome === 'bust') {
-      headline = 'BUST!'; sub = `Total: ${total}`;
+      headline = 'BUST!'; sub = `${delta} chips`;
     } else if (outcome === 'win') {
-      headline = 'WIN!'; sub = `${total} vs dealer ${dealerEntry?.result?.total ?? '?'}`;
+      headline = 'WIN!'; sub = `${sign}${delta} chips`;
     } else if (outcome === 'push') {
       headline = 'PUSH'; sub = `Both ${total}`;
     } else {
-      headline = 'LOSE'; sub = `${total} vs dealer ${dealerEntry?.result?.total ?? '?'}`;
+      headline = 'LOSE'; sub = `${delta} chips`;
     }
 
     this._flash(`${headline}\n${sub}`);
-    this._chips = local.score * 10 + 500;
+    this._chips = local.chips ?? this._chips;
     this._refreshSubLine();
   }
 

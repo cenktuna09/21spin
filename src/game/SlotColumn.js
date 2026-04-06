@@ -8,7 +8,7 @@ const CARD_W = 0.6;
 const CARD_H = 0.9;
 const CARD_D = 0.02;
 const CARD_GAP = 1.05; // vertical spacing between card centres
-const VISIBLE_CARDS = 3; // cards in the strip (must be odd so centre snaps cleanly)
+const VISIBLE_CARDS = 3; // internal strip size — only centre card is rendered
 const SPIN_SPEED = 6.0; // units per second at full speed
 const DECEL_RATE = 8.0; // deceleration (units/s²)
 
@@ -91,9 +91,44 @@ function makeBackTexture() {
 }
 
 function cardValue(rank) {
+  if (rank === 'JOKER') return 0;
   if (rank === 'A') return 11;
   if (['J', 'Q', 'K'].includes(rank)) return 10;
   return parseInt(rank, 10);
+}
+
+function makeJokerTexture() {
+  const W = 128, H = 192;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // Gold gradient background
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0,   '#2a004a');
+  grad.addColorStop(0.5, '#7b00cc');
+  grad.addColorStop(1,   '#2a004a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Border
+  ctx.strokeStyle = '#ffd700';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(4, 4, W - 8, H - 8);
+
+  // Star
+  ctx.font = 'bold 48px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText('★', W / 2, H / 2 - 16);
+
+  // JOKER text
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText('JOKER', W / 2, H / 2 + 26);
+
+  return new THREE.CanvasTexture(canvas);
 }
 
 export default class SlotColumn {
@@ -127,7 +162,7 @@ export default class SlotColumn {
     for (let i = 0; i < VISIBLE_CARDS; i++) {
       const { rank, suit } = this._nextCard();
       const faceMat = new THREE.MeshStandardMaterial({
-        map: makeCardTexture(rank, suit),
+        map: rank === 'JOKER' ? makeJokerTexture() : makeCardTexture(rank, suit),
         roughness: 0.3,
         metalness: 0.0,
       });
@@ -153,7 +188,7 @@ export default class SlotColumn {
     this._scrollY = 0;
   }
 
-  // Build a repeating pool of all 52 cards, shuffled
+  // Build a repeating pool of all 52 cards + 3 Jokers, shuffled
   _buildPool() {
     const pool = [];
     for (const suit of SUITS) {
@@ -161,6 +196,10 @@ export default class SlotColumn {
         pool.push({ rank, suit });
       }
     }
+    // Add 3 Jokers (suit is cosmetic only)
+    pool.push({ rank: 'JOKER', suit: '★' });
+    pool.push({ rank: 'JOKER', suit: '★' });
+    pool.push({ rank: 'JOKER', suit: '★' });
     // Fisher-Yates
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -221,7 +260,6 @@ export default class SlotColumn {
 
     // Wrap: if a card goes below the bottom threshold, move it to the top
     const bottomLimit = -(VISIBLE_CARDS - 1) * 0.5 * CARD_GAP - CARD_GAP;
-    const topY = (VISIBLE_CARDS - 1) * 0.5 * CARD_GAP + CARD_GAP;
 
     for (const card of this._cards) {
       if (card.mesh.position.y < bottomLimit) {
@@ -229,6 +267,12 @@ export default class SlotColumn {
         const { rank, suit } = this._nextCard();
         this._reassignCard(card, rank, suit);
       }
+    }
+
+    // Only render the card closest to centre (y=0)
+    const SHOW_THRESHOLD = CARD_GAP * 0.52;
+    for (const card of this._cards) {
+      card.mesh.visible = Math.abs(card.mesh.position.y) < SHOW_THRESHOLD;
     }
 
     // Snap when fully stopped
@@ -250,6 +294,7 @@ export default class SlotColumn {
     const offset = closest.mesh.position.y;
     for (const card of this._cards) {
       card.mesh.position.y -= offset;
+      card.mesh.visible = (card === closest);
     }
 
     this._lockedCard = { rank: closest.rank, suit: closest.suit };
