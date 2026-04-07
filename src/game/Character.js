@@ -72,7 +72,15 @@ export default class Character {
           this._model.position.copy(this.position);
           this._model.rotation.y = this.facing;
           this._model.traverse(n => {
-            if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }
+            if (n.isMesh) {
+              n.castShadow = true;
+              n.receiveShadow = true;
+              if (n.material) {
+                n.material.roughness = 0.3;
+                n.material.metalness = 0.6;
+                n.material.needsUpdate = true;
+              }
+            }
           });
           this.scene.add(this._model);
 

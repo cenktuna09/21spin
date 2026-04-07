@@ -460,6 +460,7 @@ export default class HUD {
     this._dealerPanel.style.display  = ['reveal', 'end'].includes(phase) ? 'block' : 'none';
 
     if (phase === 'spinning') {
+      this._refreshSubLine();
       this._renderStopButtons();
     }
 

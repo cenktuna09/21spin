@@ -108,7 +108,7 @@ const dealer = new Dealer(scene, gameState);
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
 const hud = new HUD(gameState, columns, {
-  onDeal: () => startRound(),
+  onDeal: (bet) => startRound(bet),
 
   onHit: () => {
     gameState.hit();   // player_choice → spinning

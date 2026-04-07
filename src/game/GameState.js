@@ -13,7 +13,7 @@
  * Events: 'phaseChange', 'scoreUpdate', 'roundEnd'
  */
 
-const REVEAL_SAFETY_TIMEOUT = 15_000;
+const REVEAL_SAFETY_TIMEOUT = 60_000; // dealer can draw many cards, give enough time
 
 export class GameState extends EventTarget {
   constructor() {

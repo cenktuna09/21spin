@@ -16,9 +16,9 @@ const DEALER_CENTER   = new THREE.Vector3(0, 2.3, -3.0); // top of table, centre
 const COL_SPACING     = 1.5;  // gap between dealer columns
 const STAND_THRESHOLD = 17;
 
-const THINK_BASE   = 1800; // ms before locking
-const THINK_JITTER =  600;
-const DECEL_WAIT   = 1300; // ms after lock() before card value is ready
+const THINK_BASE   = 1200; // ms before locking
+const THINK_JITTER =  400;
+const DECEL_WAIT   =  900; // ms after lock() before card value is ready
 
 export default class Dealer {
   constructor(scene, gameState) {
