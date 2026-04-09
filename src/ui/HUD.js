@@ -281,6 +281,75 @@ const STYLES = `
 #btn-pass:hover { background: #880000; }
 #btn-pass:active { transform: scale(0.96); }
 
+/* ── betting countdown ── */
+#hud-betting-countdown {
+  font-size: 18px;
+  color: #FFD700;
+  letter-spacing: 2px;
+  margin-bottom: 14px;
+  transition: color 0.3s;
+}
+#hud-betting-countdown.urgent { color: #ff3333; animation: pulse-bust 0.5s infinite alternate; }
+
+/* ── turn indicator ── */
+#hud-waiting-turn {
+  font-size: 8px;
+  color: #aaa;
+  letter-spacing: 2px;
+  margin-top: 6px;
+  text-align: center;
+}
+
+/* ── decision countdown ── */
+#hud-choice-timer {
+  font-size: 11px;
+  color: #aaa;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+#hud-choice-timer.urgent { color: #ff3333; animation: pulse-bust 0.4s infinite alternate; }
+
+.hud-player-row.deciding .pstatus { color: #FFD700 !important; }
+.hud-player-row.deciding .pname { color: #fff !important; }
+
+/* ── players panel (top-right) ── */
+#hud-players {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  min-width: 200px;
+  max-width: 240px;
+  background: rgba(0,0,0,0.78);
+  border: 2px solid #FFD700;
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+#hud-players-title {
+  font-size: 7px;
+  color: #FFD700;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+.hud-player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 7px;
+  color: #ccc;
+  margin-bottom: 5px;
+  gap: 8px;
+}
+.hud-player-row .pname {
+  color: #FFD700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+.hud-player-row .pname.self { color: #fff; }
+.hud-player-row .pchips { color: #aaa; font-size: 6px; }
+.hud-player-row .pstatus { font-size: 6px; color: #888; }
+
 /* ── round flash ── */
 #hud-round-flash {
   position: absolute;
@@ -307,25 +376,29 @@ export default class HUD {
    * @param {GameState} gameState
    * @param {SlotColumn[]} columns  shared mutable array
    * @param {object} opts
-   *   onDeal()        → main spawns columns + gameState.deal()
-   *   onHit()         → main spawns 3rd column + gameState.hit()
-   *   onPass()        → gameState.pass()
-   *   onStopColumn(i) → columns[i].lock()
+   *   localPlayerId   {string}    socket id of local player
+   *   onDeal(bet)     → send bet to server
+   *   onHit()         → send hit decision
+   *   onPass()        → send pass decision
+   *   onStopColumn(i) → send lock_column
    */
   constructor(gameState, columns, opts = {}) {
-    this.gameState  = gameState;
-    this.columns    = columns;
-    this.onDeal     = opts.onDeal     ?? null;
-    this.onHit      = opts.onHit      ?? null;
-    this.onPass     = opts.onPass     ?? null;
-    this.onStopCol  = opts.onStopColumn ?? null;
+    this.gameState     = gameState;
+    this.columns       = columns;
+    this.localPlayerId = opts.localPlayerId ?? 'local';
+    this.onDeal        = opts.onDeal     ?? null;
+    this.onHit         = opts.onHit      ?? null;
+    this.onPass        = opts.onPass     ?? null;
+    this.onStopCol     = opts.onStopColumn ?? null;
 
-    this._chips       = gameState.players['local']?.chips ?? 500;
-    this._bet         = 100;
-    this._hand        = [];
-    this._result      = null;
+    this._chips        = gameState.players[this.localPlayerId]?.chips ?? 500;
+    this._bet          = 100;
+    this._hand         = [];
+    this._result       = null;
     this._dealerResult = null;
     this._dealerHistory = []; // running totals per card
+    this._betDeadline      = null;
+    this._decisionDeadline = null;
 
     this._injectStyles();
     this._buildDOM();
@@ -364,6 +437,7 @@ export default class HUD {
     this._bettingEl = this._el('div', { id: 'hud-betting' });
     this._bettingEl.innerHTML = `
       <div id="hud-betting-title">PLACE YOUR BET</div>
+      <div id="hud-betting-countdown">—</div>
       <div id="hud-betting-chips">${this._chips} CHIPS</div>
       <div id="hud-betting-amount">${this._bet}</div>
       <div class="bet-adj-row">
@@ -381,28 +455,34 @@ export default class HUD {
       if (this.onDeal) this.onDeal(this._bet);
     });
     root.appendChild(this._bettingEl);
-    this._bettingAmountEl = this._bettingEl.querySelector('#hud-betting-amount');
-    this._bettingChipsEl  = this._bettingEl.querySelector('#hud-betting-chips');
+    this._bettingAmountEl    = this._bettingEl.querySelector('#hud-betting-amount');
+    this._bettingChipsEl     = this._bettingEl.querySelector('#hud-betting-chips');
+    this._bettingCountdownEl = this._bettingEl.querySelector('#hud-betting-countdown');
 
     // ── HIT / PASS overlay ──
     this._choiceEl = this._el('div', { id: 'hud-choice' });
     this._choiceEl.innerHTML = `
       <div id="hud-choice-title">HIT OR PASS?</div>
+      <div id="hud-choice-timer">20</div>
       <div id="hud-choice-total">0</div>
       <div class="choice-btns">
         <button id="btn-hit">HIT</button>
         <button id="btn-pass">PASS</button>
       </div>
     `;
+    this._waitingTurnEl = this._el('div', { id: 'hud-waiting-turn' }, '');
     this._choiceEl.querySelector('#btn-hit').addEventListener('click', () => {
       this._choiceEl.style.display = 'none';
+      this._decisionDeadline = null;
       if (this.onHit) this.onHit();
     });
     this._choiceEl.querySelector('#btn-pass').addEventListener('click', () => {
       this._choiceEl.style.display = 'none';
+      this._decisionDeadline = null;
       if (this.onPass) this.onPass();
     });
-    this._choiceTotalEl = this._choiceEl.querySelector('#hud-choice-total');
+    this._choiceTotalEl  = this._choiceEl.querySelector('#hud-choice-total');
+    this._choiceTimerEl  = this._choiceEl.querySelector('#hud-choice-timer');
     root.appendChild(this._choiceEl);
 
     // ── Player panel ──
@@ -433,13 +513,24 @@ export default class HUD {
     this._dealerHistoryEl = this._dealerPanel.querySelector('#hud-dealer-history');
     this._dealerStatusEl  = this._dealerPanel.querySelector('#hud-dealer-status');
     root.appendChild(this._dealerPanel);
+
+    // ── Players panel (top-right) ──
+    this._playersPanel = this._el('div', { id: 'hud-players' });
+    this._playersPanel.innerHTML = `
+      <div id="hud-players-title">PLAYERS</div>
+      <div id="hud-players-list"></div>
+    `;
+    this._playersListEl = this._playersPanel.querySelector('#hud-players-list');
+    root.appendChild(this._playersPanel);
   }
 
   // ── GameState binding ──────────────────────────────────────────────────────
 
   _bindGameState() {
     this.gameState.on('phaseChange',  (phase, old) => this._onPhaseChange(phase, old));
-    this.gameState.on('scoreUpdate',  (id, info)   => { if (id === 'local') this._onScoreUpdate(info); });
+    this.gameState.on('scoreUpdate',  (id, info)   => {
+      if (id === this.localPlayerId) this._onScoreUpdate(info);
+    });
     this.gameState.on('roundEnd',     (results, dealer) => this._onRoundEnd(results, dealer));
   }
 
@@ -454,19 +545,19 @@ export default class HUD {
     this._phaseBanner.textContent = labels[phase] ?? phase.toUpperCase();
 
     // Visibility logic
-    this._bettingEl.style.display    = phase === 'betting'       ? 'block' : 'none';
-    this._choiceEl.style.display     = phase === 'player_choice' ? 'block' : 'none';
-    this._playerPanel.style.display  = phase === 'betting'       ? 'none'  : 'block';
-    this._dealerPanel.style.display  = ['reveal', 'end'].includes(phase) ? 'block' : 'none';
+    this._bettingEl.style.display   = phase === 'betting' ? 'block' : 'none';
+    this._playerPanel.style.display = phase === 'betting' ? 'none'  : 'block';
+    this._dealerPanel.style.display = ['reveal', 'end'].includes(phase) ? 'block' : 'none';
+
+    // Hide choice overlay unless it's the player's turn (shown via showYourTurn())
+    if (phase !== 'player_choice') {
+      this._choiceEl.style.display = 'none';
+      this._decisionDeadline = null;
+    }
 
     if (phase === 'spinning') {
       this._refreshSubLine();
       this._renderStopButtons();
-    }
-
-    if (phase === 'player_choice') {
-      const total = this._result?.total ?? 0;
-      this._choiceTotalEl.textContent = total;
     }
 
     if (phase === 'reveal') {
@@ -478,6 +569,11 @@ export default class HUD {
     }
 
     if (phase === 'betting') {
+      // Reset betting overlay (may have been in queued state)
+      const title = this._bettingEl.querySelector('#hud-betting-title');
+      const btn   = this._bettingEl.querySelector('#btn-deal');
+      if (title) title.textContent = 'PLACE YOUR BET';
+      if (btn)   { btn.disabled = false; btn.textContent = 'SPIN!'; }
       // Reset for next round
       this._totalEl.textContent      = '0';
       this._totalEl.className        = 'hud-value';
@@ -489,8 +585,10 @@ export default class HUD {
       this._result = null;
       this._dealerResult = null;
       this._dealerHistory = [];
+      this._betDeadline = null;
+      if (this._bettingCountdownEl) this._bettingCountdownEl.textContent = '—';
       // Sync chips from GameState
-      const localPlayer = this.gameState.players['local'];
+      const localPlayer = this.gameState.players[this.localPlayerId];
       if (localPlayer) this._chips = localPlayer.chips;
       this._refreshBettingUI();
     }
@@ -503,7 +601,7 @@ export default class HUD {
   }
 
   _onRoundEnd(results, dealerEntry) {
-    const local = results.find(r => r.id === 'local');
+    const local = results.find(r => r.id === this.localPlayerId || r.playerId === this.localPlayerId);
     if (!local) return;
 
     const { outcome } = local;
@@ -588,6 +686,58 @@ export default class HUD {
     }
   }
 
+  // ── Players panel ─────────────────────────────────────────────────────────
+
+  /**
+   * @param {Array<{ id, username, chips, seatIndex? }>} players
+   * @param {string} selfId
+   */
+  setTablePlayers(players, selfId) {
+    if (!this._playersListEl) return;
+    this._playersListEl.innerHTML = '';
+    for (const p of players) {
+      const row = document.createElement('div');
+      row.className = 'hud-player-row';
+      row.dataset.pid = p.id;
+      const isSelf = p.id === selfId;
+      row.innerHTML = `
+        <span class="pname${isSelf ? ' self' : ''}">${isSelf ? '▶ ' : ''}${p.username}</span>
+        <span class="pchips">${p.chips ?? 500}</span>
+        <span class="pstatus" id="pstatus-${p.id}">—</span>
+      `;
+      this._playersListEl.appendChild(row);
+    }
+  }
+
+  updatePlayerStatus(playerId, status) {
+    const el = document.getElementById(`pstatus-${playerId}`);
+    if (el) el.textContent = status;
+  }
+
+  updatePlayerChips(playerId, chips) {
+    const row = this._playersListEl?.querySelector(`[data-pid="${playerId}"] .pchips`);
+    if (row) row.textContent = chips;
+  }
+
+  addTablePlayer(player, selfId) {
+    if (!this._playersListEl) return;
+    const row = document.createElement('div');
+    row.className = 'hud-player-row';
+    row.dataset.pid = player.id;
+    const isSelf = player.id === selfId;
+    row.innerHTML = `
+      <span class="pname${isSelf ? ' self' : ''}">${isSelf ? '▶ ' : ''}${player.username}</span>
+      <span class="pchips">${player.chips ?? 500}</span>
+      <span class="pstatus" id="pstatus-${player.id}">—</span>
+    `;
+    this._playersListEl.appendChild(row);
+  }
+
+  removeTablePlayer(playerId) {
+    const row = this._playersListEl?.querySelector(`[data-pid="${playerId}"]`);
+    row?.remove();
+  }
+
   // ── Dealer progress (called by main.js on each dealer card) ───────────────
 
   updateDealerProgress(total, cardCount) {
@@ -601,6 +751,52 @@ export default class HUD {
     this._dealerResult = result;
     this._dealerTotalEl.textContent  = result?.total ?? '?';
     this._dealerStatusEl.textContent = result?.bust ? 'BUST!' : 'STAND';
+  }
+
+  // ── Turn-based UI ──────────────────────────────────────────────────────────
+
+  /** Called when server queues this player for the next round. */
+  showQueuedState() {
+    this._bettingEl.style.display = 'block';
+    const title = this._bettingEl.querySelector('#hud-betting-title');
+    const btn   = this._bettingEl.querySelector('#btn-deal');
+    if (title) title.textContent = 'ROUND IN PROGRESS';
+    if (btn)   { btn.disabled = true; btn.textContent = 'WAITING...'; }
+  }
+
+  /** Called when server sends your_turn — show HIT/PASS dialog */
+  showYourTurn(total, deadline) {
+    this._choiceTotalEl.textContent = total;
+    this._decisionDeadline = deadline ?? null;
+    this._choiceEl.style.display = 'block';
+    this.setCurrentTurn(this.localPlayerId);
+  }
+
+  /** Highlight which player is currently deciding */
+  setCurrentTurn(playerId) {
+    this._playersListEl?.querySelectorAll('.hud-player-row').forEach(r => {
+      r.classList.remove('deciding');
+    });
+    const row = this._playersListEl?.querySelector(`[data-pid="${playerId}"]`);
+    if (row) {
+      row.classList.add('deciding');
+      const statusEl = row.querySelector('.pstatus');
+      if (statusEl) statusEl.textContent = playerId === this.localPlayerId ? '▶ YOUR TURN' : '▶ DECIDING';
+    }
+  }
+
+  // ── Betting countdown ───────────────────────────────────────────────────────
+
+  /** @param {number} deadline  Date.now() + remaining ms */
+  startBettingCountdown(deadline) {
+    this._betDeadline = deadline;
+  }
+
+  /** Server confirmed the bet — deduct from chip display for the current round */
+  onBetConfirmed(bet) {
+    this._bet   = bet;
+    this._chips -= bet;
+    this._refreshSubLine();
   }
 
   // ── Bet adjustment ─────────────────────────────────────────────────────────
@@ -621,9 +817,28 @@ export default class HUD {
     setTimeout(() => this._flashOverlay.classList.remove('show'), 2500);
   }
 
-  // ── Per-frame update (sync stop button states) ─────────────────────────────
+  // ── Per-frame update (sync stop button states + countdown) ──────────────────
 
   update() {
+    // Betting countdown
+    if (this._betDeadline && this.gameState.phase === 'betting' && this._bettingCountdownEl) {
+      const remaining = Math.max(0, this._betDeadline - Date.now());
+      const secs = Math.ceil(remaining / 1000);
+      const mm   = String(Math.floor(secs / 60)).padStart(2, '0');
+      const ss   = String(secs % 60).padStart(2, '0');
+      this._bettingCountdownEl.textContent = `${mm}:${ss}`;
+      this._bettingCountdownEl.classList.toggle('urgent', remaining < 4000);
+    }
+
+    // Decision countdown (HIT/PASS timer)
+    if (this._decisionDeadline && this._choiceTimerEl) {
+      const remaining = Math.max(0, this._decisionDeadline - Date.now());
+      const secs = Math.ceil(remaining / 1000);
+      this._choiceTimerEl.textContent = secs;
+      this._choiceTimerEl.classList.toggle('urgent', remaining < 6000);
+    }
+
+    // Stop button sync during spinning
     if (this.gameState.phase !== 'spinning') return;
     const btns = this._stopsEl.querySelectorAll('.btn-stop');
     this.columns.forEach((col, i) => {

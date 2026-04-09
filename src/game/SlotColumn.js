@@ -235,6 +235,17 @@ export default class SlotColumn {
     // Deceleration will happen in update(); snap handled when speed reaches 0
   }
 
+  /**
+   * Server-assigned card: column decelerates then snaps to this specific card.
+   * @param {string} rank
+   * @param {string} suit
+   */
+  lockWithCard(rank, suit) {
+    if (this.state === STATE.LOCKED) return;
+    this._forcedCard = { rank, suit };
+    this.state = STATE.LOCKED;
+  }
+
   getValue() {
     if (!this._lockedCard) return null;
     const { rank, suit } = this._lockedCard;
@@ -288,6 +299,12 @@ export default class SlotColumn {
     for (const card of this._cards) {
       const d = Math.abs(card.mesh.position.y);
       if (d < minDist) { minDist = d; closest = card; }
+    }
+
+    // If server assigned a specific card, reassign closest card's texture
+    if (this._forcedCard) {
+      this._reassignCard(closest, this._forcedCard.rank, this._forcedCard.suit);
+      this._forcedCard = null;
     }
 
     // Nudge all cards so the closest snaps exactly to y=0

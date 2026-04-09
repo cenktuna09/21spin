@@ -38,6 +38,9 @@ export default class Character {
     this.facing       = opts.facing       ?? 0;
     this.scale        = opts.scale        ?? DEFAULT_SCALE;
     this.controllable = opts.controllable ?? false;
+    // Movement bounds — widen for multi-table casino worlds
+    this.boundsX = opts.boundsX ?? [-9, 9];
+    this.boundsZ = opts.boundsZ ?? [-9, 9];
 
     /** Set to a ThirdPersonCamera instance to enable camera-relative movement */
     this.tpCamera = null;
@@ -184,8 +187,8 @@ export default class Character {
         this._model.rotation.y += diff * Math.min(1, 12 * delta);
 
         // Clamp to scene bounds
-        this._model.position.x = THREE.MathUtils.clamp(this._model.position.x, -9, 9);
-        this._model.position.z = THREE.MathUtils.clamp(this._model.position.z, -9, 9);
+        this._model.position.x = THREE.MathUtils.clamp(this._model.position.x, this.boundsX[0], this.boundsX[1]);
+        this._model.position.z = THREE.MathUtils.clamp(this._model.position.z, this.boundsZ[0], this.boundsZ[1]);
         this._model.position.y = this.position.y;
 
         const next = running ? 'run' : 'walk';
@@ -205,8 +208,8 @@ export default class Character {
         const sign  = k.w ? -1 : 1;
         this._model.getWorldDirection(this._forward);
         this._model.position.addScaledVector(this._forward, sign * speed * delta);
-        this._model.position.x = THREE.MathUtils.clamp(this._model.position.x, -9, 9);
-        this._model.position.z = THREE.MathUtils.clamp(this._model.position.z, -9, 9);
+        this._model.position.x = THREE.MathUtils.clamp(this._model.position.x, this.boundsX[0], this.boundsX[1]);
+        this._model.position.z = THREE.MathUtils.clamp(this._model.position.z, this.boundsZ[0], this.boundsZ[1]);
         this._model.position.y = this.position.y;
         const next = running ? 'run' : 'walk';
         if (this._moveState !== next) { this._moveState = next; this._crossfadeTo(next, 0.2); }

@@ -230,6 +230,36 @@ export class GameState extends EventTarget {
     return this;
   }
 
+  /**
+   * Called by multiplayer client to mirror server phase without re-running local logic.
+   * Also fires 'phaseChange' event so HUD + character reactions still trigger.
+   */
+  receivePhase(phase) {
+    if (this.phase === phase) return;
+    const old = this.phase;
+    this.phase = phase;
+    this._emit('phaseChange', phase, old);
+  }
+
+  /**
+   * Apply server-assigned card result to a player's hand.
+   * @param {string} playerId
+   * @param {number} colIndex  0|1|2
+   * @param {{ rank, suit, value }} card
+   */
+  receiveCard(playerId, colIndex, card) {
+    const player = this.players[playerId];
+    if (!player) return;
+    if (colIndex === 0 || colIndex === 1) {
+      player.hand[colIndex] = card;
+    } else {
+      player.hand[2] = card;
+    }
+    const fullHand = player.hand.filter(Boolean);
+    player.result = this._evaluate(fullHand);
+    this._emit('scoreUpdate', playerId, { hand: fullHand, result: player.result, chips: player.chips });
+  }
+
   toJSON()     { return { phase: this.phase, round: this.round, players: this.players }; }
   fromJSON(d)  { this.phase = d.phase ?? 'betting'; this.round = d.round ?? 0; this.players = d.players ?? {}; }
 }

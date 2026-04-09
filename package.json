@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "partykit": "^0.0.110",
+    "socket.io-client": "^4.8.3",
     "three": "^0.170.0"
   },
   "devDependencies": {
